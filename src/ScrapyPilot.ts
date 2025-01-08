@@ -13,20 +13,21 @@ import {
   ComputerRequest,
   EditRequest,
 } from "scrapybara/api/index";
-import {
-  ImageBlockParam,
-  TextBlockParam,
-} from "@anthropic-ai/sdk/resources";
+import { ImageBlockParam, TextBlockParam } from "@anthropic-ai/sdk/resources";
 
 import { BetaToolUseBlockParam } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 
-interface ToolResult {
-  output?: string; 
-  error?: string;  
-  base64_image?: string; 
-  system?: any; 
-}
+import { DownloadFileRequest, FileManager } from "./FileManager";
 
+import dotenv from "dotenv";
+dotenv.config();
+
+export interface ToolResult {
+  output?: string;
+  error?: string;
+  base64_image?: string;
+  system?: any;
+}
 
 export class ScrapyPilot {
   private scrapybaraClient: ScrapybaraClient;
@@ -37,9 +38,11 @@ export class ScrapyPilot {
   private SYSTEM_PROMPT: string;
   private cpdURL: string | null = null;
 
-  constructor(scrapybaraKey: string, anthropicKey: string) {
-    this.scrapybaraClient = new ScrapybaraClient({ apiKey: scrapybaraKey });
-    this.anthropicClient = new Anthropic({ apiKey: anthropicKey });
+  constructor() {
+    this.scrapybaraClient = new ScrapybaraClient({
+      apiKey: process.env.SCRAPYBARA_API_KEY,
+    });
+    this.anthropicClient = new Anthropic(); // loaded from .env
     this.tools = [
       {
         type: "computer_20241022",
@@ -178,7 +181,7 @@ export class ScrapyPilot {
           name: message.name,
           type: "tool_use",
         };
-  
+
         messages.push({
           role: "assistant",
           content: [toolUseBlock],
@@ -187,9 +190,10 @@ export class ScrapyPilot {
     }
     return messages;
   }
-  
+
   make_api_tool_result(
-    result: ToolResult, tool_use_id: string
+    result: ToolResult,
+    tool_use_id: string
   ): BetaToolResultBlockParam | string {
     let tool_result: string | Array<TextBlockParam | ImageBlockParam> = [];
     let is_error: boolean = false;
@@ -197,13 +201,19 @@ export class ScrapyPilot {
     if (result.error) {
       is_error = true;
       tool_result = result.error;
-      }
-     else {
+    } else {
       if (result.output) {
         tool_result.push({ type: "text", text: result.output });
       }
       if (result.base64_image) {
-        tool_result.push({type:'image', source: {type: "base64", data: result.base64_image, media_type: "image/png"}});
+        tool_result.push({
+          type: "image",
+          source: {
+            type: "base64",
+            data: result.base64_image,
+            media_type: "image/png",
+          },
+        });
       }
     }
 
@@ -238,9 +248,6 @@ export class ScrapyPilot {
             tools: this.tools,
             betas: ["computer-use-2024-10-22"],
           });
-
-          console.log("Initial response:");
-          console.dir(response, { depth: 4 });
         } catch (error) {
           console.error("Error during Claude Call:", error);
           await this.stopInstance();
@@ -248,9 +255,6 @@ export class ScrapyPilot {
         }
 
         const response_params = this.response_to_params(response);
-        console.log("Response Params:");
-        console.dir(response_params, { depth: 4 });
-
         const tool_result_content: BetaToolResultBlockParam[] = [];
 
         for (const content_block of response_params) {
@@ -289,8 +293,11 @@ export class ScrapyPilot {
                 );
                 result = r as ToolResult;
               } else if (content_block.content[0].name === "download_file") {
-                // implement custom tool
-                console.log("Download tool requested");
+                let request = content_block.content[0]
+                  .input as DownloadFileRequest;
+                let file = new FileManager();
+                let r = await file.createAndSaveFile(request);
+                result = r as ToolResult;
               } else {
                 console.log("Tool not found");
               }
@@ -311,8 +318,7 @@ export class ScrapyPilot {
                 tool_result_content.push(
                   tool_result as BetaToolResultBlockParam
                 );
-              }
-              else{
+              } else {
                 console.log("Tool result is null");
               }
             }
